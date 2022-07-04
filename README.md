@@ -16,3 +16,5 @@ The goals of this study:
 3. Data visualization techniques for a better understanding about the data.
 4. Practice tabular data extraction and manipulation for an efficient analysis in R.
 5. Use different R Studio libraries. (e.g. MASS, dplyr, ggplot2 etc.)
+
+![My Image](Election.jpg)
