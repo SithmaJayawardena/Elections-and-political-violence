@@ -1,0 +1,222 @@
+---
+title: "Identifying a statistically significant politically critical period surrounding African elections"
+output:
+  html_document:
+    df_print: paged
+---
+
+An election is a sensitive event with meaningful political and economic implications for many people. It represents an opportunity for the redistribution of power and a shift in priorities for a nation. As such, it invites extreme responses that sometimes can be translated to political violence. By examining a longitudinal sample of 49 African countries’ election cycles between the years 1997-2020 in this project, I assessed the association between elections and political violence. I used Armed Conflict Location and Event Data (ACLED) that collects real-time data on the locations, dates, actors, fatalities, and types of all reported political violence and protest events around the world. The data includes several other control variables to account for factors that may affect political and electoral violence, extracted from the Varieties of Democracy dataset and World Bank.
+
+The questions explored in this project are as follows:
+
+1. Is there a trend in incidence of political violence closer to election days?
+2. Is the above trend statistically significant? In other words, is there a statistically significant association in between elections and political violence?
+3. What is the length of the period where there exist a statistically significant trend?
+
+The goals of this study:
+
+1. Use negative binomial regression models to test the association between elections and political violence.
+2. Use two-sample difference of mean tests; t-test, Welch test, and Wilcoxon test, to test the hypothesis that the means of a monthly number of violent events in the election and non-election periods are different.
+3. Data visualization techniques for a better understanding about the data.
+4. Practice tabular data extraction and manipulation for an efficient analysis in R.
+5. Use different R Studio libraries. (e.g. MASS, dplyr, ggplot2 etc.)
+
+#### Importing libraries
+
+```{r}
+suppressPackageStartupMessages({library(dummies)
+library(dplyr)
+library(MASS)
+library(ggplot2)
+library(readxl)})
+options(warn=-1)
+```
+
+
+#### Importing the dataset
+
+```{r}
+full = read_xlsx('/Users/sithmasineka/Desktop/Research_3/R project/Project1/full.xlsx')
+dff1 = as.data.frame(full)
+head(dff1)
+```
+
+#### Data pre-processing
+
+Now, let's do some data pre-processing. In the above data set rows represent plotical violence events and the columns have information such as country, date, event type etc. regarding each event. Columns 'Since' and 'Until' have the characters '.' and 'NA' in some of the rows. 'Since' column is the number of days since the previous election day to the day of the event and 'Until' column is the number of days to the next election day from the day of the event. I replaced the characters of these columns to numbers.
+
+```{r}
+print(paste('There are', nrow(dff1), 'political violence events in this data set'))
+dff1$Since = ifelse(dff1$Since == '.', 1000000,dff1$Since)
+dff1$Until[is.na(dff1$Until)] = -1000000
+dff1$Since = as.integer(dff1$Since)
+dff1 = dff1 %>% mutate(pre = ifelse((abs(Until) <= Since), 1,0))  #if Until<Since, then the event occured in the pre election period
+dff1$post = ifelse(dff1$pre == 0, 1,0)
+```
+
+### Question 1: Is there a trend in incidence of political violence closer to election days?
+
+Next, I checked the trend of daily frequency political violence from 1997-2020. Here, I grouped the daily incidence of events and visualize the time series data. Notice from the plot that there is  a clear increasing trend for the past decade. This manifests the fact that political violence is escalating in African countries.
+
+```{r}
+dff1$event_date = as.Date(dff1$event_date, '%Y/%m/%d')
+dff1$freq = 1
+dff2 = data.frame(dff1 %>%group_by(event_date) %>%summarise(sum_freq = sum(freq)))
+head(dff2)
+ggplot( data = dff2, aes( event_date, sum_freq )) + geom_line(colour = "dark blue") +xlab('Date') +ylab('Daily number of violent events') +
+  ggtitle('Daily violence distribution in African countries')+stat_smooth(color = "red", method="loess",se=FALSE,size=0.5,linetype=2)+
+  theme(axis.text=element_text(size=12), axis.title=element_text(size=14),title = element_text(size = 14))
+```
+
+ACLED categorizes political violence events into battles, explosion/remote violence, protest, riots, strategic developments and violence against civilians. Since strategic developments are not really violent as in the ACLED codebook, I did not take those events into account in the analysis. Then, I extracted the events that falls in a pre- or post-election period which were not strategic development events to see the trend in political violence events surrounding the election.
+
+```{r}
+dfall = dff1[((dff1$pre == 1) | (dff1$post == 1)) & (dff1$event_type!='Strategic developments'),c(4,6,7,17,18)]
+dfall = dfall %>% mutate(days = ifelse(pre == 1,Until,Since))
+head(dfall)
+```
+
+Now let's see the incidence of political violence around the election. In this plot, negative values of the x-axis represent number of days to the next election day from the event day and positive values represent the number of days from the previous election day to the event day. Zero value indicates the election day itself. Notice that the incidents are centered around the election day (zero value) inducing the fact that political violence more frequently accompanies elections than other periods. This points out the existence of a politically critical period; a period that aggravates social tension. However, this cycle is said to be asymmetrical on the assumption that pre-election violence starts to spark gradually when leading up to elections while post-election violence fades quickly once the ballots are cast. So, I chose asymmetrical election cycles as the politically critical period/election period.
+
+```{r}
+dfall %>% ggplot( aes(x=days)) +
+  geom_histogram( binwidth=30, fill="dark blue", color="#e9ecef", alpha=0.9) +
+  ggtitle("Distribution of violent events around the election") +xlab('Number of days to/from election day') +
+  theme(axis.text=element_text(size=12),axis.title=element_text(size=14),title = element_text(size = 14))
+```
+
+### Question 2 & 3: Is the above trend statistically significant? In other words, is there a statistically significant association in between elections and political violence? What is the length of the period where there exist a statistically significant trend?
+
+#### Importing the dataset
+
+This data set is similar to the first dataset except this is grouped by year-months.
+
+```{r}
+Month_freq1 = read_xlsx('/Users/sithmasineka/Desktop/Research_3/R project/Project1/Month_freq1.xlsx')
+df=data.frame(Month_freq1)
+head(df)
+```
+First, let's do some data pre-processing.
+
+```{r}
+df$std.logGDP=scale(log(df$GDP))
+df$std.logpop=scale(log(df$population))
+df$std.logtech=scale(log(df$tech))
+df$Until_M=as.integer(df$Until_M)
+df$Since_M=as.integer(df$Since_M)
+df$polity=df$polity+10
+df$Until_M=-1*(df$Until_M)
+options(warn=-1)
+```
+
+Now, to capture the significance of the trend found in question 1, I used negative binomial regression models in MASS R library and two-sample difference of mean tests; t-test, Welch test, and Wilcoxon test to test the hypothesis that the means of a monthly number of violent events in the election and non-election periods are different.
+
+#### Negative binomial regression models & two-sample difference of mean tests.
+
+The dependent variable in Negative binomial regression models is the 'freq' column which is the number of political violence events occurred in the year-month and main independent variable is 'Election' which is coded 1 if the month falls in the considered time frame for the election cycle. Several other variables are used to control for other additional factors affecting the incidence of political violence.
+
+##### Election cycle: One month - fifteen days before and after the elections.
+
+Summary of the model shows that one month of election cycle is associated with a higher level of political violence and contentious politics more than any other period in our sample. The incidence rate ratio indicates that in the election month, count of political violence events is nearly exp(0.491841) = 1.5 times higher in the election month compared to non-election period. Furthermore, p-values < 0.5 from all three two-sample difference of mean tests confirm these results by implying that the difference of the means of a monthly number of violent events in the election and non-election periods is significant at 95% significance level in one month election cycle.
+
+```{r}
+df['Election']=NA 
+df['Election']=df['Elections'] # coded 1 if this month falls in the one month of election period
+neg.mod1=glm.nb(freq ~ factor(Election)+Until_M+Since_M+kill+torture+polity+fair+corrupt+factor(war)+std.logGDP+
+                  std.logpop+std.logtech,data = df)
+summary(neg.mod1)
+```
+
+```{r}
+eve=df[df$Election==1,] # dataframe of election period
+Neve=df[df$Election!=1,] # dataframe of non-election period
+print(paste0('Number of events in the election period is ', sum(eve$freq)))
+print(paste0('Number of events in the non-election period is ', sum(Neve$freq)))
+a=t.test(eve$freq, y = Neve$freq, var.equal = FALSE, conf.level = 0.95)
+b=t.test(eve$freq, y = Neve$freq, var.equal = TRUE, conf.level = 0.95)
+c=wilcox.test(eve$freq, y = Neve$freq, alternative = "two.sided")
+r1=round(c(a$p.value,b$p.value,c$p.value),4)
+print(paste0('The p-values for t-tests, Welch test, and Wilcoxon test are ', r1[1],', ',r1[2],' and ',r1[3],' respectively'))
+```
+
+In the rest of this project, I considered longer asymmetrical election cycles: four months, six months, eight months. For the purpose of fitting negative binomial regression models and to run two-sample difference of mean tests, following functions can be used.
+
+The function 'Neg.Models' can be used to fit negative binomial regression models. Here, the input variables are period, pre and post which represent months of election cycle, pre-election period and post-election period respectively. Variable 'Election' is coded 1 if the month falls in the considered election cycle. Finally, the function gives the output of the data frame used in the next function with the newly created column and the summary of negative binomial regression model.
+
+```{r}
+Neg.Models = function(period,pre,post){
+  frame = df
+  frame['Election'] = NA 
+  for (i in 1:length(frame$Elections)) {
+    if (frame$Elections[i] == 1){
+      frame$Election[c((i-pre):(i+post))] = rep(1,period)
+    }
+  }
+  frame$Election[is.na(frame$Election)] = 0
+  Model = glm.nb(freq ~ factor(Election)+Until_M+Since_M+kill+torture+polity+fair+corrupt+factor(war)+std.logGDP+
+                    std.logpop+std.logtech,data = frame)
+  return(list(summary(Model),frame))
+}
+```
+
+The second function called as 'Mean_Tests' can be used to run two-sample difference of mean tests : t-test, Welch test, and Wilcoxon test. Here, the input variable is the data frame created from the 'Neg.Models' function and the output is the p-values from the tests.
+
+```{r}
+Mean_Tests = function(DF){
+  event = DF[DF$Election == 1,] # dataframe of election period
+  N_event = DF[DF$Election != 1,] # dataframe of non-election period
+  print(paste0('Number of events in the election period is ', sum(event$freq)))
+  print(paste0('Number of events in the non-election period is ', sum(N_event$freq)))
+  a = t.test(event$freq, y = N_event$freq, var.equal = FALSE, conf.level = 0.95)
+  b = t.test(event$freq, y = N_event$freq, var.equal = TRUE, conf.level = 0.95)
+  c = wilcox.test(event$freq, y = N_event$freq, alternative = "two.sided")
+  r = round(c(a$p.value,b$p.value,c$p.value),4)
+  print(paste0('The p-values for t-tests, Welch test, and Wilcoxon test are ', r[1],', ',r[2],' and ',r[3],' respectively'))
+}
+```
+
+
+##### Election cycle: Four months - two months before and one month after election month plus election month itself.
+
+Summary of the model demonstrates a similar trend. The higher rates of political violence gour months period are statistically significant. The incidence rate ratio indicates that the election month count of political violence events is nearly exp(0.172840) = 1.2 times higher in the four-month election cycle compared to non-election period. Furthermore, p-values < 0.5 from the two-sample difference of mean tests except for Wilcoxon test confirm these results by implying that the difference of the means of a monthly number of violent events in the election and non-election periods is significant at 95% significance level in four months election cycle.
+
+```{r}
+cycle.4 = Neg.Models(period = 4, pre = 2, post = 1)
+cycle.4[[1]]
+```
+
+```{r}
+Mean_Tests(DF = cycle.4[[2]])
+```
+
+##### Election cycle: Six months - three months before and two months after election month plus election month itself.
+
+Now let's consider longer periods of election periods. This model does not give statistically significant results in relation to the association in between political violence and elections.Furthermore, p-values > 0.5 from all three two-sample difference of mean tests confirm these results by implying that the difference of the means of a monthly number of violent events in the election and non-election periods is not significant at 95% significance level in six months election cycle.
+
+```{r}
+cycle.6 = Neg.Models(period = 6, pre = 3, post = 2)
+cycle.6[[1]]
+```
+
+```{r}
+Mean_Tests(DF = cycle.6[[2]])
+```
+
+##### Election cycle: Eight months - four months before and three months after election month plus election month itself.
+
+Again, we get statistically not significant results four eight months election cycle. In addition, two-sample difference of mean tests confirm these results. Therefore, the association in between political violence and elections is not significant when we consider longer periods as the election cycle.
+
+```{r}
+cycle.8 = Neg.Models(period = 8, pre = 4, post = 3)
+cycle.8[[1]]
+```
+
+```{r}
+Mean_Tests(DF = cycle.8[[2]])
+```
+
+### Summary
+
+The timing of political conflicts is unpredictable, yet political violence more frequently accompanies elections than other periods. The plots induced that the incidence of violence events is centered around the election day. Violence may begin to heat up as soon as the election season is open and endures even after the victors have been announced, spurring actors towards civil disorder. However, this cycle is said to be asymmetrical on the assumption that pre-election violence starts to spark gradually when leading up to elections while post-election violence fades quickly once the ballots are cast. The results show that the higher rates of political violence and contentious politics within that cycle are statistically significant. Furthermore, the results suggest a diminishing increment of count of political violence events when moving away from the election month. Those findings point out towards the boundaries of the politically critical period:  a time frame of about four months with a peak during the month around the election.
+
+
